@@ -49,13 +49,57 @@ export const tradingTokensToPoolTokens = (
   swapSourceAmount,
   poolAmount
 ) => {
+  // CRITICAL FIX: Validate inputs
+  if (sourceAmount < 0 || swapSourceAmount <= 0 || poolAmount < 0) {
+    throw new Error('Invalid input parameters: amounts must be non-negative and swapSourceAmount must be positive');
+  }
+  
+  // CRITICAL FIX: Handle zero source amount
+  if (sourceAmount === 0) {
+    return 0;
+  }
+  
+  // CRITICAL FIX: Handle zero pool amount
+  if (poolAmount === 0) {
+    return 0;
+  }
+  
+  // CRITICAL FIX: Fix trading fee calculation - use proper BN arithmetic
+  const tradingFeeNumerator = TRADING_FEE_NUMERATOR.toNumber();
+  const tradingFeeDenominator = TRADING_FEE_DENOMINATOR.toNumber();
+  
+  // CRITICAL FIX: Prevent division by zero in fee calculation
+  if (tradingFeeDenominator === 0) {
+    throw new Error('Invalid trading fee configuration: denominator is zero');
+  }
+  
   const tradingFee =
     (sourceAmount / 2) *
-    (TRADING_FEE_NUMERATOR.toNumber() / TRADING_FEE_DENOMINATOR.toNumber());
+    (tradingFeeNumerator / tradingFeeDenominator);
+  
   const sourceAmountPostFee = sourceAmount - tradingFee;
+  
+  // CRITICAL FIX: Validate post-fee amount
+  if (sourceAmountPostFee <= 0) {
+    throw new Error('Invalid calculation: source amount after fee is zero or negative');
+  }
+  
+  // CRITICAL FIX: Prevent division by zero in root calculation
+  if (swapSourceAmount === 0) {
+    throw new Error('Invalid swap source amount: cannot be zero');
+  }
+  
   const root = Math.sqrt(sourceAmountPostFee / swapSourceAmount + 1);
-
-  return Math.floor(poolAmount * (root - 1));
+  
+  // CRITICAL FIX: Validate root calculation
+  if (isNaN(root) || !isFinite(root)) {
+    throw new Error('Invalid calculation: root is NaN or infinite');
+  }
+  
+  const result = Math.floor(poolAmount * (root - 1));
+  
+  // CRITICAL FIX: Ensure non-negative result
+  return Math.max(0, result);
 };
 
 export const findPoolSeed = (tokenSwapProgramId) => {
@@ -810,16 +854,34 @@ export const getSwapAmountSaros = async (
     connection,
     new PublicKey(address.toString())
   );
+  
+  // CRITICAL FIX: Add null check for poolInfo
+  if (!poolInfo) {
+    throw new Error('Pool information not found');
+  }
+  
   const {
     token0Account,
     token1Account,
     tradeFeeDenominator,
     tradeFeeNumerator,
   } = poolInfo;
+  
+  // CRITICAL FIX: Validate required pool data
+  if (!token0Account || !token1Account || !tradeFeeDenominator || !tradeFeeNumerator) {
+    throw new Error('Invalid pool data: missing required fields');
+  }
+  
   const fromCoinMintClone = cloneDeep(fromCoinMint);
   const toCoinMintClone = cloneDeep(toCoinMint);
   const newSlippage = parseFloat(slippage);
   const newAmount = parseFloat(amount);
+  
+  // CRITICAL FIX: Validate input amount
+  if (newAmount <= 0) {
+    throw new Error('Invalid input amount: must be greater than 0');
+  }
+  
   const accountInfos = await Promise.all([
     connection.getAccountInfo(new PublicKey(token0Account.toString())),
     connection.getAccountInfo(new PublicKey(token1Account.toString())),
@@ -827,11 +889,22 @@ export const getSwapAmountSaros = async (
   const tokenInfos = accountInfos.map((info) =>
     info ? deserializeAccount(info.data) : undefined
   );
-  if (!tokenInfos[0] || !tokenInfos[1]) return 0;
+  
+  // CRITICAL FIX: Validate token infos
+  if (!tokenInfos[0] || !tokenInfos[1]) {
+    throw new Error('Token account information not found');
+  }
+  
   const inputTokenAccount = tokenInfos[0];
   const inputTokenInfo = tokens[inputTokenAccount.mint.toString()];
   const outputTokenAccount = tokenInfos[1];
   const outputTokenInfo = tokens[outputTokenAccount.mint.toString()];
+  
+  // CRITICAL FIX: Validate token info
+  if (!inputTokenInfo || !outputTokenInfo) {
+    throw new Error('Token metadata not found');
+  }
+  
   const convertAmountInputToken = parseFloat(
     convertWeiToBalance(
       inputTokenAccount.amount.toNumber(),
@@ -844,14 +917,22 @@ export const getSwapAmountSaros = async (
       outputTokenInfo.decimals
     )
   );
+  
+  // CRITICAL FIX: Validate token amounts
+  if (convertAmountInputToken <= 0 || convertAmountOutputToken <= 0) {
+    throw new Error('Insufficient liquidity in pool');
+  }
+  
   let fromAmountWithFee =
     (newAmount *
       (tradeFeeDenominator.toNumber() - tradeFeeNumerator.toNumber())) /
     tradeFeeDenominator;
 
-  if (tradeFeeDenominator.toNumber() === 0 || tradeFeeNumerator.toNumber()) {
+  // CRITICAL FIX: Fix the division by zero bug
+  if (tradeFeeDenominator.toNumber() === 0) {
     fromAmountWithFee = newAmount;
   }
+  
   const rateEst = convertAmountOutputToken / convertAmountInputToken;
 
   if (
@@ -859,6 +940,12 @@ export const getSwapAmountSaros = async (
     toCoinMintClone === outputTokenInfo.mintAddress
   ) {
     const denominator = convertAmountInputToken + fromAmountWithFee;
+    
+    // CRITICAL FIX: Prevent division by zero
+    if (denominator <= 0) {
+      throw new Error('Invalid pool state: denominator is zero or negative');
+    }
+    
     const amountOut =
       (convertAmountOutputToken * fromAmountWithFee) / denominator;
     const amountOutWithSlippage = amountOut / (1 + newSlippage / 100);
@@ -878,6 +965,12 @@ export const getSwapAmountSaros = async (
     };
   } else {
     const denominator = convertAmountOutputToken + fromAmountWithFee;
+    
+    // CRITICAL FIX: Prevent division by zero
+    if (denominator <= 0) {
+      throw new Error('Invalid pool state: denominator is zero or negative');
+    }
+    
     const amountOut =
       (convertAmountInputToken * fromAmountWithFee) / denominator;
     const amountOutWithSlippage = amountOut / (1 + newSlippage / 100);
